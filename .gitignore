@@ -8,3 +8,6 @@
 ![Tt]ools/packages.config
 [Aa]rtifacts/
 .[Dd]otnet/
+*.meta
+.DS_Store
+

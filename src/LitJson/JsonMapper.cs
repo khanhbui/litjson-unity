@@ -24,6 +24,7 @@ namespace LitJson
         public MemberInfo Info;
         public bool       IsField;
         public Type       Type;
+        public string     Alias;
     }
 
 
@@ -102,6 +103,8 @@ namespace LitJson
         #region Fields
         private static readonly int max_nesting_depth;
 
+        private static readonly BindingFlags binding_flags;
+
         private static readonly IFormatProvider datetime_format;
 
         private static readonly IDictionary<Type, ExporterFunc> base_exporters_table;
@@ -135,6 +138,8 @@ namespace LitJson
         static JsonMapper ()
         {
             max_nesting_depth = 100;
+
+            binding_flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
             array_metadata = new Dictionary<Type, ArrayMetadata> ();
             conv_ops = new Dictionary<Type, IDictionary<Type, MethodInfo>> ();
@@ -207,7 +212,7 @@ namespace LitJson
 
             data.Properties = new Dictionary<string, PropertyMetadata> ();
 
-            foreach (PropertyInfo p_info in type.GetProperties ()) {
+            foreach (PropertyInfo p_info in type.GetProperties (binding_flags)) {
                 if (p_info.Name == "Item") {
                     ParameterInfo[] parameters = p_info.GetIndexParameters ();
 
@@ -220,20 +225,52 @@ namespace LitJson
                     continue;
                 }
 
+                var is_public =
+                    p_info.GetGetMethod () != null && p_info.GetGetMethod ().IsPublic ||
+                    p_info.GetSetMethod () != null && p_info.GetSetMethod ().IsPublic;
+
+                if (is_public) {
+                    var a_ignore = Attribute.GetCustomAttribute (p_info, typeof (JsonIgnoreAttribute));
+                    if (a_ignore != null)
+                        continue;
+                }
+
+                string alias = null;
+                var a_serialize = Attribute.GetCustomAttribute (p_info, typeof (JsonSerializeAttribute));
+                if (a_serialize != null)
+                    alias = ((JsonSerializeAttribute)a_serialize).Alias;
+                else if (!is_public)
+                    continue;
+
                 PropertyMetadata p_data = new PropertyMetadata ();
                 p_data.Info = p_info;
                 p_data.Type = p_info.PropertyType;
+                p_data.Alias = alias;
 
-                data.Properties.Add (p_info.Name, p_data);
+                data.Properties.Add (alias != null ? alias : p_info.Name, p_data);
             }
 
-            foreach (FieldInfo f_info in type.GetFields ()) {
+            foreach (FieldInfo f_info in type.GetFields (binding_flags)) {
+                if (f_info.IsPublic) {
+                    var a_ignore = Attribute.GetCustomAttribute (f_info, typeof (JsonIgnoreAttribute));
+                    if (a_ignore != null)
+                        continue;
+                }
+
+                string alias = null;
+                var a_serialize = Attribute.GetCustomAttribute (f_info, typeof (JsonSerializeAttribute));
+                if (a_serialize != null)
+                    alias = ((JsonSerializeAttribute)a_serialize).Alias;
+                else if (!f_info.IsPublic)
+                    continue;
+
                 PropertyMetadata p_data = new PropertyMetadata ();
                 p_data.Info = f_info;
                 p_data.IsField = true;
                 p_data.Type = f_info.FieldType;
+                p_data.Alias = alias;
 
-                data.Properties.Add (f_info.Name, p_data);
+                data.Properties.Add (alias != null ? alias : f_info.Name, p_data);
             }
 
             lock (object_metadata_lock) {
@@ -252,20 +289,53 @@ namespace LitJson
 
             IList<PropertyMetadata> props = new List<PropertyMetadata> ();
 
-            foreach (PropertyInfo p_info in type.GetProperties ()) {
+            foreach (PropertyInfo p_info in type.GetProperties (binding_flags)) {
                 if (p_info.Name == "Item")
+                    continue;
+
+                var is_public =
+                    p_info.GetGetMethod () != null && p_info.GetGetMethod ().IsPublic ||
+                    p_info.GetSetMethod () != null && p_info.GetSetMethod ().IsPublic;
+
+                if (is_public) {
+                    var a_ignore = Attribute.GetCustomAttribute (p_info, typeof (JsonIgnoreAttribute));
+                    if (a_ignore != null)
+                        continue;
+                }
+
+                string alias = null;
+                var a_serialize = Attribute.GetCustomAttribute (p_info, typeof (JsonSerializeAttribute));
+                if (a_serialize != null)
+                    alias = ((JsonSerializeAttribute)a_serialize).Alias;
+                else if (!is_public)
                     continue;
 
                 PropertyMetadata p_data = new PropertyMetadata ();
                 p_data.Info = p_info;
                 p_data.IsField = false;
+                p_data.Alias = alias;
+
                 props.Add (p_data);
             }
 
-            foreach (FieldInfo f_info in type.GetFields ()) {
+            foreach (FieldInfo f_info in type.GetFields (binding_flags)) {
+                if (f_info.IsPublic) {
+                    var a_ignore = Attribute.GetCustomAttribute (f_info, typeof (JsonIgnoreAttribute));
+                    if (a_ignore != null)
+                        continue;
+                }
+
+                string alias = null;
+                var a_serialize = Attribute.GetCustomAttribute (f_info, typeof (JsonSerializeAttribute));
+                if (a_serialize != null)
+                    alias = ((JsonSerializeAttribute)a_serialize).Alias;
+                else if (!f_info.IsPublic)
+                    continue;
+
                 PropertyMetadata p_data = new PropertyMetadata ();
                 p_data.Info = f_info;
                 p_data.IsField = true;
+                p_data.Alias = alias;
 
                 props.Add (p_data);
             }
@@ -865,7 +935,7 @@ namespace LitJson
                     PropertyInfo p_info = (PropertyInfo) p_data.Info;
 
                     if (p_info.CanRead) {
-                        writer.WritePropertyName (p_data.Info.Name);
+                        writer.WritePropertyName (p_data.Alias ?? p_data.Info.Name);
                         WriteValue (p_info.GetValue (obj, null),
                                     writer, writer_is_private, depth + 1);
                     }
